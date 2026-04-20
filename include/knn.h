@@ -11,5 +11,7 @@
 // idx : Output indices, size (n_Q x k)
 // dst : Output distances, size (n_Q x k)
 void knn_v0(double* C, double* Q, int n_C, int n_Q, int d, int k, int* idx, double* dst);
+void knn_v1_omp(double* C, double* Q, int n_C, int n_Q, int d, int k, int* idx, double* dst);
+void knn_v1_pth(double* C, double* Q, int n_C, int n_Q, int d, int k, int* idx, double* dst);
 
 #endif // KNN_H
