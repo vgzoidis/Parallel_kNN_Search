@@ -16,58 +16,57 @@
 \maketitle
 
 \section{Introduction}
-This report outlines the implementation and analysis of a $C/C++$ subroutine to compute the $k$-Nearest Neighbors ($k$-NN) for a query set $Q$ of $n_Q$ points against a corpus set $C$ of $n_C$ points, both in $d$-dimensional space. 
-For this project, an exact distance algorithm was implemented in serial as a baseline (Version 0), and then parallelized using two main frameworks: OpenMP and POSIX Threads (Pthreads) as Version 1. 
+This report outlines the implementation and analysis of a C/C++ subroutine designed to compute the $k$-Nearest Neighbors ($k$-NN) for a query set $Q$ of $n_Q$ points against a corpus set $C$ of $n_C$ points, both in $d$-dimensional space.
+For this project, an exact distance algorithm was implemented in serial as a baseline (Version 0), and then parallelized using two main frameworks: OpenMP and POSIX Threads (Pthreads) as Version 1.
 
 \section{Mathematical Method \& Distance Calculation}
-Instead of generating a full $O(n^2)$ Euclidean distance matrix which would result in severe memory exhaustion for large inputs, the algorithm operates by evaluating the mathematically robust expansion:
+Instead of generating a full $O(n^2)$ Euclidean distance matrix, which would quickly exhaust memory for large inputs, the algorithm operates by evaluating the expanded distance formula:
 \begin{equation}
 D(C, Q) = \sqrt{C^2 - 2 C Q^T + Q^2}
 \end{equation}
 
-In this setup, each column (or point) of $Q$ is processed iteratively. To ensure calculation efficiency, the term $-2 C Q^T$ is calculated using \texttt{OpenBLAS} (Basic Linear Algebra Subprograms). Specifically, the highly optimized level-2 BLAS function \texttt{cblas\_dgemv} handles dense matrix-vector multiplications, granting massive acceleration compared to looping native naive implementations. 
+In this setup, each query point (or column) of $Q$ is processed iteratively. To maximize calculation efficiency, the $-2 C Q^T$ term is computed using \texttt{OpenBLAS} as specified by the assignment. Specifically, the highly optimized level-2 BLAS function \texttt{cblas\_dgemv} was used to handle the dense matrix-vector multiplications.
 
-Following the matrix processing, an $O(N)$ QuickSelect partitioning algorithm isolates the exact top $k$ minimum distances, providing accurate neighbors without needing to sort the entire resulting $O(N \log N)$ distance array.
+Following the matrix computations, an $O(N)$ QuickSelect partitioning algorithm isolates the exact top $k$ minimum distances. This provides the nearest neighbors without the $O(N \log N)$ computational overhead of sorting the entire distance array.
 
 \section{Parallelization Methodologies}
-When testing symmetric queries over identically sized inputs ($C=Q$), the independent distance evaluations can be horizontally parallelized.
+When testing symmetric queries over identically sized inputs ($C=Q$), the independent distance evaluations can be parallelized horizontally.
 
 \subsection{OpenMP Implementation}
-OpenMP handles parallel evaluations through compiler pragmas mapping to threaded processing logic. By explicitly calling \texttt{\#pragma omp parallel} encompassing the main query loops, and attaching \texttt{\#pragma omp for}, OpenMP maps independent query execution subsets concurrently mapped dynamically over cores. Thread state contexts properly allocate internal storage memory frames per loop chunk to avoid corrupting parallel memory addresses, and implicitly joins and collapses cleanly natively.
+OpenMP simplifies parallelization by using compiler pragmas to handle threaded execution logic. By wrapping the main query loops with \texttt{\#pragma omp parallel} and \texttt{\#pragma omp for}, OpenMP dynamically maps subsets of the query execution across available cores. Furthermore, thread contexts allocate memory frames per loop chunk (preventing race conditions) and seamlessly handle thread joining upon completion.
 
 \subsection{Pthreads Implementation}
-With Pthreads, manual execution thread creation is constructed. The query boundaries $Q$ are mathematically chunked and split using integer slicing. A struct mapped to the custom \texttt{knn\_worker} routine accepts start/end array indices. Each explicit OS thread is initialized by calling \texttt{pthread\_create()}, processes its bounds, and integrates using \texttt{pthread\_join()}. 
-To prevent execution deadlock from nested OpenBLAS computations natively launching on top of our OS threads, we ensure explicit constraints are forced via \texttt{openblas\_set\_num\_threads(1)} mapped directly inside Pthread worker environments.
+With Pthreads, thread management is handled manually. The query set $Q$ is divided into equal chunks (using integer slicing), and a struct mapped to the custom \texttt{knn\_worker} routine passes the start and end indices to each thread. Threads are explicitly created with \texttt{pthread\_create()}, process their assigned bounds, and integrate using \texttt{pthread\_join()}. To prevent deadlocks from the nested OpenBLAS computations attempting to spawn their own threads on top of our OS threads, we constrain OpenBLAS to a single thread per worker using \texttt{openblas\_set\_num\_threads(1)}.
 
 \section{Correctness Checks \& Validation}
-Correctness is mathematically guaranteed iteratively. First, the distance matrices and neighbor arrays were evaluated for simplistic datasets natively mimicking exact Python metrics. To confirm consistency formally, a python automation suite (\texttt{utils/validate.py}) utilizing symmetric pseudo-random dataset initialization runs against the native C subroutines concurrently mapping inputs through binaries via stdout and compares evaluations accurately strictly mapped against \texttt{scikit-learn}'s \texttt{NearestNeighbors(algorithm='brute')}. Matrices are compared globally by evaluating \texttt{np.max(np.abs(dst\_c - dst\_py)) < 1e-4}, guaranteeing completely identical floating offsets matching exactly precisely natively.
+To verify correctness during development, the algorithm's output was first tested using simplistic datasets. Then, to confirm consistency formally, a Python script was implemented (\texttt{utils/validate.py}) to generate symmetric pseudo-random datasets and feed them to the compiled C binaries. Subsequently, their output is compared against \texttt{scikit-learn}'s \texttt{NearestNeighbors(algorithm='brute')}. Finally, the outputs are validated globally by ensuring the maximum absolute difference between the distance matrices is within an acceptable floating-point tolerance (\texttt{np.max(np.abs(dst\_c - dst\_py)) < 1e-4}), guaranteeing that our C implementation demonstrates parity with the Python reference.
 
 \section{System Computing Environment}
-The benchmarks and thread optimizations were assessed on the specified architecture: 
+Benchmarks and thread optimizations were evaluated on the following hardware and software:
 \begin{itemize}
-    \item \textbf{CPU Processor}: AMD Ryzen 7 5800H with Radeon Graphics 
+    \item \textbf{CPU}: AMD Ryzen 7 5800H with Radeon Graphics 
     \item \textbf{Cores \& Threads}: 8 Physical Cores, 16 Logical Threads
     \item \textbf{Virtualization}: Enabled 
-    \item \textbf{OS / Compilation}: Linux architecture, GNU \texttt{gcc} matching -O3 optimization sequences dynamically linked to \texttt{libopenblas}.
+    \item \textbf{Operating Environment}: Ubuntu via WSL2
+    \item \textbf{Compilation}: Compiled via GNU \texttt{gcc} with -O3 optimization and dynamically linked to \texttt{libopenblas}.
 \end{itemize}
 
 \section{Calculation Performance \& Speedups}
-Experiment executions were run against uniformly generated datasets ($10,000 \times 10$ Corpus against $1,000$ Queries evaluating $k=5$). The performance bounds were rigorously benchmarked scaling utilizing exactly 4 designated threads mapped systematically per core.
+Experiments were run against uniformly generated datasets (a $10,000 \times 10$ Corpus against $1,000$ Queries, evaluating $k=5$) as per the defaults of the \texttt{validate.py} script. On the same basis, performance was  benchmarked by dedicating exactly 4 threads to the parallel executions.
 
 \begin{figure}[h]
     \centering
     \includegraphics[width=0.8\textwidth]{speedup.png}
-    \caption{Benchmarking comparison between Exact Scikit-Learn logic alongside our tested Baseline $v0$, OpenMP, and PThreads executions running 4 threads respectively, demonstrating clear efficiency boundaries and specific $15-20x$ multiplier margins.}
+    \caption{Benchmarking comparison between Scikit-Learn logic alongside our tested Baseline $v0$ and OpenMP/PThreads executions running 4 threads respectively.}
     \label{fig:speedup}
 \end{figure}
 
 \subsection{Speedup Evaluation}
 \begin{itemize}
-    \item \textbf{Version 0 (Serial Base)}: Processed roughly taking $0.78$ seconds on median loop executions tracking strictly natively via OpenBLAS.
-    \item \textbf{Version 1 (OpenMP)}: Mapping 4 threads internally negotiated natively evaluating metrics in $\approx 0.05$ seconds ($\approx 15.46x$ Speedup over $v0$). OpenMP efficiently bounds implicit OpenBLAS matrices gracefully allocating overhead thresholds gracefully allowing optimal OS mapping natively.
-    \item \textbf{Version 1 (Pthreads)}: Mapping limits constrained evaluating at $\approx 0.126$ seconds ($\approx 6.19x$ Speedup). The discrepancy overhead matches POSIX limits aggressively chunked natively. By restricting OpenBLAS limits natively to a threshold of 1 via configurations, PThreads escapes OS starvation oversubscription loops yielding expected hardware bound optimization multipliers cleanly scaling reliably respectively mapped against cores. 
+    \item \textbf{Version 0 (Serial Base)}: The baseline execution time was approximately $0.78$ seconds, relying strictly on OpenBLAS.
+    \item \textbf{Version 1 (OpenMP)}: Utilizing 4 threads, execution dropped to $\approx 0.05$ seconds (a $\approx 15.46\times$ speedup over the baseline). This exceptional scaling suggests OpenMP efficiently manages thread overhead while allowing OpenBLAS to fully utilize the underlying hardware.
+    \item \textbf{Version 1 (Pthreads)}: The Pthreads implementation executed in $\approx 0.126$ seconds (a $\approx 6.19\times$ speedup). While significantly faster than the serial version, manual thread chunking introduces more overhead. However, limiting OpenBLAS to 1 thread per worker successfully prevented OS starvation, allowing the manual threading to scale reliably across the cores.
 \end{itemize}
 
-These metrics explicitly showcase the tremendous flexibility utilizing OpenBLAS matrices mapped securely alongside chunked multi-core parallel iterations ensuring precise distance sorting mapping globally.
-
+Overall, these metrics clearly demonstrate the massive performance gains achievable when combining optimized math libraries like OpenBLAS with careful multi-core parallelization.
 \end{document}
